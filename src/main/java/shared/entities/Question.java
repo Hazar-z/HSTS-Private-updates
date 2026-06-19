@@ -2,6 +2,7 @@ package shared.entities;
 
 /**
  * Shared Entity representing an exam question (Shared Agreement).
+ * Updated to support persistent multiple-choice answer tracking across the integration layers.
  */
 public class Question {
     // 1. Private variables to lock down the exact fields from your shared agreement
@@ -10,6 +11,9 @@ public class Question {
     private String instructions;
     private String difficulty;
     private String topic;
+
+    // NEW FIELD: Internal storage collection to hold the linked multiple-choice options
+    private java.util.List<String> answers = new java.util.ArrayList<>();
 
     // 2. The Constructor: Used to easily pack raw database cells into this Java object box
     public Question(String questionId, String text, String instructions, String difficulty, String topic) {
@@ -36,4 +40,8 @@ public class Question {
 
     public String getTopic() { return topic; }
     public void setTopic(String topic) { this.topic = topic; }
+
+    // NEW METHODS: Added to pass answer collections smoothly across the 3-Tier bridge
+    public java.util.List<String> getAnswers() { return answers; }
+    public void setAnswers(java.util.List<String> answers) { this.answers = answers; }
 }

@@ -7,7 +7,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 
 /**
- * Controller handling creation, modification, deletion, and search filtering of exam questions.
+ * Production Controller handling creation, modification, deletion, and search filtering of exam questions.
  */
 public class QuestionServerController {
 
@@ -18,60 +18,100 @@ public class QuestionServerController {
     }
 
     /**
-     * Inserts a new question into the database using a pre-compiled template script.
+     * Inserts a new question and its 4 answers under a safe database transaction.
      */
-    public boolean createQuestion(String text, String difficulty, String instructions, String topic, String courseId) {
-        // FIXED: Passed courseId into the method argument slot
+    public boolean createQuestion(String text, String difficulty, String instructions, String topic, String courseId, java.util.List<String> answers) {
         String questionId = generateQuestionId(courseId);
         if (questionId == null) return false;
 
         String sql = "INSERT INTO questions (question_id, text, difficulty, instructions, topic, course_id) VALUES (?, ?, ?, ?, ?, ?)";
         Connection conn = dbManager.getConnection();
-
         if (conn == null) return false;
 
-        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setString(1, questionId);
-            stmt.setString(2, text);
-            stmt.setString(3, difficulty);
-            stmt.setString(4, instructions);
-            stmt.setString(5, topic);
-            stmt.setString(6, courseId);
+        try {
+            conn.setAutoCommit(false);
 
-            int rowsAffected = stmt.executeUpdate(); //
-            return rowsAffected > 0;
-        } catch (SQLException e) {
-            if (e instanceof java.sql.SQLIntegrityConstraintViolationException) {
-                System.out.println("[DB WARNING] Duplicate question text detected. Insertion blocked safely.");
-            } else {
-                System.err.println("[DB ERROR] Failed to create new question.");
-                e.printStackTrace();
+            // 1. Insert Main Question Row
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, questionId);
+                stmt.setString(2, text);
+                stmt.setString(3, difficulty);
+                stmt.setString(4, instructions);
+                stmt.setString(5, topic);
+                stmt.setString(6, courseId);
+                stmt.executeUpdate();
             }
+
+            // 2. Insert the 4 Linked Multiple Choice Options
+            String answerSql = "INSERT INTO question_answers (question_id, answer_text, is_correct) VALUES (?, ?, ?)";
+            try (PreparedStatement answerStmt = conn.prepareStatement(answerSql)) {
+                for (int i = 0; i < answers.size(); i++) {
+                    answerStmt.setString(1, questionId);
+                    answerStmt.setString(2, answers.get(i));
+                    answerStmt.setInt(3, (i == 1) ? 1 : 0);
+                    answerStmt.addBatch();
+                }
+                answerStmt.executeBatch();
+            }
+
+            conn.commit();
+            return true;
+        } catch (SQLException e) {
+            try { conn.rollback(); } catch (SQLException rollbackEx) { rollbackEx.printStackTrace(); }
+            e.printStackTrace();
             return false;
+        } finally {
+            try { conn.setAutoCommit(true); } catch (SQLException e) { e.printStackTrace(); }
         }
     }
 
     /**
-     * Modifies the text and instructions of an existing question row on the hard drive.
+     * Modifies the question, instructions, and resets the multiple-choice lines.
      */
-    public boolean editQuestion(String questionId, String newText, String newInstruction) {
-        // FIXED: Changed 'instruction' to 'instructions' to match your MySQL table schema rules
+    public boolean editQuestion(String questionId, String newText, String newInstruction, java.util.List<String> updatedAnswers, java.util.List<Integer> correctnessBits) {
         String sql = "UPDATE questions SET text = ?, instructions = ? WHERE question_id = ?";
         Connection conn = dbManager.getConnection();
-
         if (conn == null) return false;
 
-        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setString(1, newText);
-            stmt.setString(2, newInstruction);
-            stmt.setString(3, questionId);
+        try {
+            conn.setAutoCommit(false);
 
-            int rowsAffected = stmt.executeUpdate(); //
-            return rowsAffected > 0;
+            // 1. Update main properties
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, newText);
+                stmt.setString(2, newInstruction);
+                stmt.setString(3, questionId);
+                stmt.executeUpdate();
+            }
+
+            // 2. Wipe old answers safely
+            String deleteAnswersSql = "DELETE FROM question_answers WHERE question_id = ?";
+            try (PreparedStatement delStmt = conn.prepareStatement(deleteAnswersSql)) {
+                delStmt.setString(1, questionId);
+                delStmt.executeUpdate();
+            }
+
+            // 3. Write fresh updated multiple choice option lines with real states!
+            String insertAnswerSql = "INSERT INTO question_answers (question_id, answer_text, is_correct) VALUES (?, ?, ?)";
+            try (PreparedStatement answerStmt = conn.prepareStatement(insertAnswerSql)) {
+                for (int i = 0; i < updatedAnswers.size(); i++) {
+                    answerStmt.setString(1, questionId);
+                    answerStmt.setString(2, updatedAnswers.get(i));
+                    // Dynamic value pulled straight from the UI selection array!
+                    answerStmt.setInt(3, correctnessBits.get(i));
+                    answerStmt.addBatch();
+                }
+                answerStmt.executeBatch();
+            }
+
+            conn.commit();
+            return true;
         } catch (SQLException e) {
-            System.err.println("[DB ERROR] Failed to update question: " + questionId);
+            try { conn.rollback(); } catch (SQLException rollbackEx) { rollbackEx.printStackTrace(); }
             e.printStackTrace();
             return false;
+        } finally {
+            try { conn.setAutoCommit(true); } catch (SQLException e) { e.printStackTrace(); }
         }
     }
 
@@ -79,31 +119,44 @@ public class QuestionServerController {
      * Permanently deletes a specific question row from the database using its ID.
      */
     public boolean deleteQuestion(String questionId) {
-        String sql = "DELETE FROM questions WHERE question_id = ?";
-        Connection conn = dbManager.getConnection();
+        // Safe cascading behavior: clean dependent rows first before dropping main reference
+        String deleteAnswersSql = "DELETE FROM question_answers WHERE question_id = ?";
+        String deleteQuestionSql = "DELETE FROM questions WHERE question_id = ?";
 
+        Connection conn = dbManager.getConnection();
         if (conn == null) return false;
 
-        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setString(1, questionId);
+        try {
+            conn.setAutoCommit(false);
 
-            int rowsAffected = stmt.executeUpdate(); //
+            try (PreparedStatement stmt1 = conn.prepareStatement(deleteAnswersSql)) {
+                stmt1.setString(1, questionId);
+                stmt1.executeUpdate();
+            }
+
+            int rowsAffected;
+            try (PreparedStatement stmt2 = conn.prepareStatement(deleteQuestionSql)) {
+                stmt2.setString(1, questionId);
+                rowsAffected = stmt2.executeUpdate();
+            }
+
+            conn.commit();
             return rowsAffected > 0;
         } catch (SQLException e) {
+            try { conn.rollback(); } catch (SQLException rollbackEx) { rollbackEx.printStackTrace(); }
             System.err.println("[DB ERROR] Failed to drop question: " + questionId);
             e.printStackTrace();
             return false;
+        } finally {
+            try { conn.setAutoCommit(true); } catch (SQLException e) { e.printStackTrace(); }
         }
     }
 
     /**
-     * Searches for questions filtering by BOTH course ID and a specific topic keyword.
-     * Converts raw database rows into Java Question objects dynamically.
+     * Searches for questions filtering by a specific topic and course ID.
      */
     public java.util.List<shared.entities.Question> searchQuestions(String topicKeyword, String courseId) {
         java.util.List<shared.entities.Question> resultsList = new java.util.ArrayList<>();
-
-        // Robust dual-filter query: filters by course_id and matches the topic securely
         String sql = "SELECT question_id, text, instructions, difficulty, topic FROM questions WHERE course_id = ? AND topic LIKE ?";
         Connection conn = dbManager.getConnection();
 
@@ -111,7 +164,6 @@ public class QuestionServerController {
 
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, courseId);
-            // The % wildcards mean "find any topic that contains this word anywhere inside it"
             stmt.setString(2, "%" + (topicKeyword != null ? topicKeyword : "") + "%");
 
             try (ResultSet rs = stmt.executeQuery()) {
@@ -123,11 +175,28 @@ public class QuestionServerController {
                     String topic = rs.getString("topic");
 
                     shared.entities.Question questionObj = new shared.entities.Question(id, text, instructions, difficulty, topic);
+
+                    java.util.List<String> answerTexts = new java.util.ArrayList<>();
+                    // FIXED: Removed non-existent answer_index sort field
+                    String answerSql = "SELECT answer_text FROM question_answers WHERE question_id = ?";
+
+                    try (PreparedStatement answerStmt = conn.prepareStatement(answerSql)) {
+                        answerStmt.setString(1, id);
+                        try (ResultSet answerRs = answerStmt.executeQuery()) {
+                            while (answerRs.next()) {
+                                answerTexts.add(answerRs.getString("answer_text"));
+                            }
+                        }
+                    } catch (SQLException e) {
+                        System.err.println("[DB WARNING] Could not pull answers for ID: " + id);
+                    }
+
+                    questionObj.setAnswers(answerTexts);
                     resultsList.add(questionObj);
                 }
             }
         } catch (SQLException e) {
-            System.err.println("[DB ERROR] Failed fetching search query results for course: " + courseId + " and topic: " + topicKeyword);
+            System.err.println("[DB ERROR] Failed fetching search query results.");
             e.printStackTrace();
         }
 
@@ -148,7 +217,7 @@ public class QuestionServerController {
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, courseId);
 
-            try (ResultSet rs = stmt.executeQuery()) { //
+            try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
                     int existingCount = rs.getInt(1);
                     int nextSerialNumber = existingCount + 1;

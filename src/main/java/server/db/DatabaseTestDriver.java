@@ -29,13 +29,22 @@ public class DatabaseTestDriver {
 
         System.out.println("\n--- STEP 2: LOADING YOUR 6 SEQUENTIAL BLUEPRINT QUESTIONS ---");
 
+        // Helper list setup to quickly supply 4 distinct choices per query mapping
+        java.util.List<String> logicAns = java.util.Arrays.asList("q -> p", "not p or q", "p and not q", "not p and not q");
+        java.util.List<String> bstAns = java.util.Arrays.asList("O(1)", "O(log n)", "O(n)", "O(n log n)");
+        java.util.List<String> lifoAns = java.util.Arrays.asList("Queue", "Stack", "Singly Linked List", "Binary Tree");
+        java.util.List<String> oopAns = java.util.Arrays.asList("Method Overloading", "Method Overriding", "Compilation Error", "Encapsulation Violation");
+        java.util.List<String> sortAns = java.util.Arrays.asList("O(n)", "O(n log n)", "O(n^2)", "O(1)");
+        java.util.List<String> dpAns = java.util.Arrays.asList("O(n)", "O(m*n)", "O(2^n)", "O(log n)");
+
         // Course 22 - Mathematical Logic track (Will generate: 22001)
         questionController.createQuestion(
                 "Which of the following propositions is logically equivalent to the conditional statement p -> q?",
                 "MEDIUM",
                 "Apply standard logical equivalences.",
                 "Propositional Logic",
-                "22"
+                "22",
+                logicAns
         );
 
         // Course 11 - Computer Science track (Will generate: 11001, 11002, 11003, 11004, 11005)
@@ -44,7 +53,8 @@ public class DatabaseTestDriver {
                 "MEDIUM",
                 "Choose the single most accurate asymptotic upper bound.",
                 "Data Structures",
-                "11"
+                "11",
+                bstAns
         );
 
         questionController.createQuestion(
@@ -52,7 +62,8 @@ public class DatabaseTestDriver {
                 "EASY",
                 "Select the correct foundational abstract data type.",
                 "Data Structures",
-                "11"
+                "11",
+                lifoAns
         );
 
         questionController.createQuestion(
@@ -60,7 +71,8 @@ public class DatabaseTestDriver {
                 "MEDIUM",
                 "Assume standard object-oriented programming conventions.",
                 "Object-Oriented Programming",
-                "11"
+                "11",
+                oopAns
         );
 
         questionController.createQuestion(
@@ -68,7 +80,8 @@ public class DatabaseTestDriver {
                 "MEDIUM",
                 "Consider standard comparison-based sorting models.",
                 "Sorting Algorithms",
-                "11"
+                "11",
+                sortAns
         );
 
         questionController.createQuestion(
@@ -76,16 +89,17 @@ public class DatabaseTestDriver {
                 "HARD",
                 "Select the single best algorithmic complexity.",
                 "Dynamic Programming",
-                "11"
+                "11",
+                dpAns
         );
 
         System.out.println("[SERVER] Your custom questions have been beautifully indexed!");
 
 
         System.out.println("\n--- STEP 3: TESTING OBJECT MAPPING & SEARCH QUERY ---");
-        // Ask the controller to find any question with the word "Data" in the topic keyword
-// Pass both the topic keyword search string AND a test course ID (e.g., "11")
-        java.util.List<shared.entities.Question> searchResults = questionController.searchQuestions("Data", "11");        System.out.println("Search executed. Total Question objects instantiated from DB: " + searchResults.size());
+        // Pass both the topic keyword search string AND a test course ID (e.g., "11")
+        java.util.List<shared.entities.Question> searchResults = questionController.searchQuestions("Data", "11");
+        System.out.println("Search executed. Total Question objects instantiated from DB: " + searchResults.size());
 
         // Loop through the list of objects and print their internal data fields
         for (shared.entities.Question q : searchResults) {
