@@ -15,6 +15,11 @@ public class Question {
     // NEW FIELD: Internal storage collection to hold the linked multiple-choice options
     private java.util.List<String> answers = new java.util.ArrayList<>();
 
+    // FIX: Parallel list (same index as 'answers') tracking which answer is correct.
+    // Added because the GUI needs to know which option to flag as correct when a
+    // question is selected, and this was previously dropped after leaving the DB.
+    private java.util.List<Boolean> correctFlags = new java.util.ArrayList<>();
+
     // 2. The Constructor: Used to easily pack raw database cells into this Java object box
     public Question(String questionId, String text, String instructions, String difficulty, String topic) {
         this.questionId = questionId;
@@ -44,4 +49,8 @@ public class Question {
     // NEW METHODS: Added to pass answer collections smoothly across the 3-Tier bridge
     public java.util.List<String> getAnswers() { return answers; }
     public void setAnswers(java.util.List<String> answers) { this.answers = answers; }
+
+    // FIX: Getters/setters for the parallel correctness list.
+    public java.util.List<Boolean> getCorrectFlags() { return correctFlags; }
+    public void setCorrectFlags(java.util.List<Boolean> correctFlags) { this.correctFlags = correctFlags; }
 }

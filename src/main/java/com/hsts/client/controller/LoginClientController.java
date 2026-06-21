@@ -5,6 +5,7 @@ import com.hsts.client.network.ResponseHandler;
 import com.hsts.client.network.ServerConnection;
 import com.hsts.shared.model.User;
 import com.hsts.shared.net.dto.LoginData;
+import com.hsts.shared.net.dto.LogoutData;
 import com.hsts.shared.net.Command;
 import com.hsts.shared.net.Response;
 
@@ -33,7 +34,17 @@ public class LoginClientController implements ResponseHandler {
         client.sendToServer(Command.LOGIN, new LoginData(username, password));
     }
 
+    /**
+     * FIX: previously this only cleared local client state, never telling
+     * the server. That left the username permanently marked "logged in" on
+     * the server side, so logging in again as that user would always be
+     * rejected until the server process itself was restarted. Now it sends
+     * a real LOGOUT request so the server can release the username.
+     */
     public void logout() {
+        if (currentUser != null) {
+            client.sendToServer(Command.LOGOUT, new LogoutData(currentUser.getId()));
+        }
         currentUser = null;
     }
 

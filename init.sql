@@ -1,6 +1,6 @@
 -- =========================================================================
 -- UNIFIED HSTS SYSTEM DATA ARCHITECTURE BLUEPRINT (init.sql)
--- Target Database: hsts_database (Aligned Team Standard)
+-- Target Database: hsts_db (Aligned Team Standard)
 -- =========================================================================
 CREATE DATABASE IF NOT EXISTS hsts_db;
 USE hsts_db;

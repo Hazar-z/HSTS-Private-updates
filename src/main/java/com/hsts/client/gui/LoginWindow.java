@@ -133,6 +133,14 @@ public class LoginWindow {
             Stage stage = (Stage) loginButton.getScene().getWindow();
             stage.setTitle("HSTS - Question Management");
             stage.setScene(new Scene(root));
+
+            // FIX: previously nothing ever called controller.logout(), so the
+            // server never released the username from its "active sessions"
+            // set. Closing the window (the only way to end a session in this
+            // app, since there's no explicit Logout button) now tells the
+            // server to release it, so the same user can log back in later
+            // without needing to restart MainServerApp.
+            stage.setOnCloseRequest(event -> controller.logout());
         } catch (IOException e) {
             showError("System Error: Could not load Question Management screen.");
         }

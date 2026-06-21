@@ -210,24 +210,23 @@ public class QuestionManagementWindow {
             }
             pendingSelectQuestionId = null;
         }
+
+        suppressMessageClear = false;
     }
 
     public void onQuestionSaved(Question question) {
         pendingSelectQuestionId = question.getQuestionId();
 
-        // Clear any active filters - otherwise a saved question that doesn't
-        // match the current search (e.g. different course/topic) would
-        // vanish from the list and look like the save silently failed.
         searchTopicField.clear();
         searchDifficultySelector.setValue(null);
         searchCourseSelector.setValue(null);
 
+        statusLabel.setText("Question " + question.getQuestionId() + " saved successfully.");
+
         suppressMessageClear = true;
         handleSearchQuestions();
-        suppressMessageClear = false;
-
-        statusLabel.setText("Question " + question.getQuestionId() + " saved successfully.");
     }
+
 
     public void onQuestionDeleted() {
         selectedQuestion = null;

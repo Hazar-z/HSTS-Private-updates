@@ -19,14 +19,28 @@ public class QuestionServerController {
 
     /**
      * Inserts a new question and its 4 answers under a safe database transaction.
+     * FIX: now returns the generated questionId (or null on failure) instead of a
+     * plain boolean, so callers (MainServerApp) can send the real ID back to the
+     * GUI instead of leaving it null in the success response.
      */
-    public boolean createQuestion(String text, String difficulty, String instructions, String topic, String courseId, java.util.List<String> answers) {
+    public String createQuestion(String text, String difficulty, String instructions, String topic, String courseId, java.util.List<String> answers) {
+        return createQuestion(text, difficulty, instructions, topic, courseId, answers, null);
+    }
+
+    /**
+     * Overload accepting an explicit correctness list (parallel to 'answers').
+     * If correctFlags is null, falls back to the old hardcoded "index 1 is correct"
+     * behavior for backward compatibility with existing callers (e.g. DatabaseTestDriver),
+     * but any real caller should now pass the actual selections from the GUI.
+     */
+    public String createQuestion(String text, String difficulty, String instructions, String topic, String courseId,
+                                  java.util.List<String> answers, java.util.List<Integer> correctFlags) {
         String questionId = generateQuestionId(courseId);
-        if (questionId == null) return false;
+        if (questionId == null) return null;
 
         String sql = "INSERT INTO questions (question_id, text, difficulty, instructions, topic, course_id) VALUES (?, ?, ?, ?, ?, ?)";
         Connection conn = dbManager.getConnection();
-        if (conn == null) return false;
+        if (conn == null) return null;
 
         try {
             conn.setAutoCommit(false);
@@ -48,18 +62,28 @@ public class QuestionServerController {
                 for (int i = 0; i < answers.size(); i++) {
                     answerStmt.setString(1, questionId);
                     answerStmt.setString(2, answers.get(i));
-                    answerStmt.setInt(3, (i == 1) ? 1 : 0);
+                    // FIX: previously always hardcoded index 1 as the correct answer
+                    // regardless of what the GUI actually selected. Now uses the real
+                    // correctness flag passed in, falling back to the old behavior
+                    // only if no flags were supplied at all (legacy callers).
+                    int isCorrect;
+                    if (correctFlags != null && i < correctFlags.size()) {
+                        isCorrect = correctFlags.get(i);
+                    } else {
+                        isCorrect = (i == 1) ? 1 : 0;
+                    }
+                    answerStmt.setInt(3, isCorrect);
                     answerStmt.addBatch();
                 }
                 answerStmt.executeBatch();
             }
 
             conn.commit();
-            return true;
+            return questionId;
         } catch (SQLException e) {
             try { conn.rollback(); } catch (SQLException rollbackEx) { rollbackEx.printStackTrace(); }
             e.printStackTrace();
-            return false;
+            return null;
         } finally {
             try { conn.setAutoCommit(true); } catch (SQLException e) { e.printStackTrace(); }
         }
@@ -177,14 +201,18 @@ public class QuestionServerController {
                     shared.entities.Question questionObj = new shared.entities.Question(id, text, instructions, difficulty, topic);
 
                     java.util.List<String> answerTexts = new java.util.ArrayList<>();
-                    // FIXED: Removed non-existent answer_index sort field
-                    String answerSql = "SELECT answer_text FROM question_answers WHERE question_id = ?";
+                    // FIX: also select is_correct so the GUI can flag the right answer.
+                    // Previously only answer_text was selected, so every answer came
+                    // back as "not correct" regardless of what was stored in MySQL.
+                    java.util.List<Boolean> correctFlags = new java.util.ArrayList<>();
+                    String answerSql = "SELECT answer_text, is_correct FROM question_answers WHERE question_id = ?";
 
                     try (PreparedStatement answerStmt = conn.prepareStatement(answerSql)) {
                         answerStmt.setString(1, id);
                         try (ResultSet answerRs = answerStmt.executeQuery()) {
                             while (answerRs.next()) {
                                 answerTexts.add(answerRs.getString("answer_text"));
+                                correctFlags.add(answerRs.getInt("is_correct") == 1);
                             }
                         }
                     } catch (SQLException e) {
@@ -192,6 +220,7 @@ public class QuestionServerController {
                     }
 
                     questionObj.setAnswers(answerTexts);
+                    questionObj.setCorrectFlags(correctFlags);
                     resultsList.add(questionObj);
                 }
             }

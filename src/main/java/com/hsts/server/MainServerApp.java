@@ -84,6 +84,21 @@ public class MainServerApp {
         });
 
         // =========================================================================
+        // ROUTE A.1: LOGOUT (Releases the username so it can log in again)
+        // =========================================================================
+        // FIX: this route didn't exist before. LoginServerController.login()
+        // refuses any username that's already marked active, but nothing
+        // ever called logout() to clear that mark - so once a user logged
+        // in, that username was permanently blocked until the whole server
+        // process was restarted. This route, paired with the client now
+        // actually sending Command.LOGOUT on window close, fixes that.
+        router.registerHandler(Command.LOGOUT, request -> {
+            com.hsts.shared.net.dto.LogoutData data = (com.hsts.shared.net.dto.LogoutData) request.getPayload();
+            loginServerController.logout(data.getUsername());
+            return Response.success(Command.LOGOUT, null, "Logged out successfully.", request.getRequestId());
+        });
+
+        // =========================================================================
         // ROUTE B: SEARCH QUESTIONS (Dual-Filter Data-Type Standardized Mapping)
         // =========================================================================
         router.registerHandler(Command.SEARCH_QUESTIONS, request -> {
@@ -101,7 +116,15 @@ public class MainServerApp {
                     guiQ.setQuestionId(dbQ.getQuestionId());
                     guiQ.setText(dbQ.getText());
                     guiQ.setTopic(dbQ.getTopic());
-                    guiQ.setDifficulty(com.hsts.shared.model.Difficulty.MEDIUM);
+                    // FIX: previously hardcoded to Difficulty.MEDIUM for every result,
+                    // ignoring the real difficulty value already fetched from MySQL.
+                    com.hsts.shared.model.Difficulty realDifficulty;
+                    try {
+                        realDifficulty = com.hsts.shared.model.Difficulty.valueOf(dbQ.getDifficulty());
+                    } catch (Exception ex) {
+                        realDifficulty = com.hsts.shared.model.Difficulty.MEDIUM; // safe fallback if DB value is unexpected
+                    }
+                    guiQ.setDifficulty(realDifficulty);
                     guiQ.setCourseId(courseFilter);
 
                     // ─────────────────────────────────────────────────────────────────
@@ -113,9 +136,15 @@ public class MainServerApp {
                     // 2. Map the actual SQL string array list to the custom QuestionAnswer DTO list
                     java.util.List<com.hsts.shared.model.QuestionAnswer> guiAnswers = new java.util.ArrayList<>();
                     if (dbQ.getAnswers() != null) {
-                        for (String ansText : dbQ.getAnswers()) {
+                        java.util.List<String> texts = dbQ.getAnswers();
+                        java.util.List<Boolean> flags = dbQ.getCorrectFlags();
+                        for (int i = 0; i < texts.size(); i++) {
                             com.hsts.shared.model.QuestionAnswer guiAns = new com.hsts.shared.model.QuestionAnswer();
-                            guiAns.setText(ansText);
+                            guiAns.setText(texts.get(i));
+                            // FIX: previously isCorrect was never set, so every answer
+                            // defaulted to false and the GUI couldn't flag the right one.
+                            boolean isCorrect = flags != null && i < flags.size() && Boolean.TRUE.equals(flags.get(i));
+                            guiAns.setCorrect(isCorrect);
                             guiAnswers.add(guiAns);
                         }
                     }
@@ -128,8 +157,8 @@ public class MainServerApp {
             return Response.success(Command.SEARCH_QUESTIONS, formattedGuiResults, "Database query loaded successfully.", request.getRequestId());
         });
         // =========================================================================
-// ROUTE C: CREATE QUESTION (Saves main row AND 4 answers to MySQL)
-// =========================================================================
+        // ROUTE C: CREATE QUESTION (Saves main row AND 4 answers to MySQL)
+        // =========================================================================
         router.registerHandler(Command.CREATE_QUESTION, request -> {
             // 1. Unpack the CreateQuestionData directly
             com.hsts.shared.net.dto.CreateQuestionData wrapperDto = (com.hsts.shared.net.dto.CreateQuestionData) request.getPayload();
@@ -145,23 +174,43 @@ public class MainServerApp {
             // 🔥 NEW STEP: Extract the answers list from the DTO payload array
             // ─────────────────────────────────────────────────────────────────
             java.util.List<String> answersList = new java.util.ArrayList<>();
+            // FIX: also extract the real correctness flag for each answer.
+            // Previously this list didn't exist, so createQuestion() always
+            // hardcoded answer index 1 as correct regardless of GUI selection.
+            java.util.List<Integer> correctFlagsList = new java.util.ArrayList<>();
             if (wrapperDto.getAnswers() != null) {
                 for (com.hsts.shared.model.QuestionAnswer ans : wrapperDto.getAnswers()) {
                     if (ans.getText() != null && !ans.getText().trim().isEmpty()) {
                         answersList.add(ans.getText());
+                        correctFlagsList.add(ans.isCorrect() ? 1 : 0);
                     }
                 }
             }
 
             // 3. Invoke YOUR controller's updated signature passing the answers list as the 6th parameter!
-            boolean isSaved = questionServerController.createQuestion(text, difficulty, instructions, topic, courseId, answersList);
+            // FIX: createQuestion now returns the generated questionId (or null on
+            // failure) instead of boolean, so the real ID can be sent back to the GUI.
+            String newQuestionId = questionServerController.createQuestion(text, difficulty, instructions, topic, courseId, answersList, correctFlagsList);
 
-            if (!isSaved) {
+            if (newQuestionId == null) {
                 return Response.failure(Command.CREATE_QUESTION, "Database insertion rejected the record.", request.getRequestId());
             }
 
-            // Return a success message alongside the dto payload
-            return Response.success(Command.CREATE_QUESTION, wrapperDto, "Question saved to MySQL database successfully!", request.getRequestId());
+            // ─────────────────────────────────────────────────────────────────
+            // FIX: Build an actual Question object for the client instead of
+            // echoing back the input wrapperDto. The client casts this payload
+            // to com.hsts.shared.model.Question, so that's what must be sent.
+            // ─────────────────────────────────────────────────────────────────
+            com.hsts.shared.model.Question savedQ = new com.hsts.shared.model.Question();
+            savedQ.setQuestionId(newQuestionId);
+            savedQ.setText(text);
+            savedQ.setInstructions(instructions);
+            savedQ.setTopic(topic);
+            savedQ.setCourseId(courseId);
+            savedQ.setDifficulty(wrapperDto.getDifficulty());
+            savedQ.setAnswers(wrapperDto.getAnswers());
+
+            return Response.success(Command.CREATE_QUESTION, savedQ, "Question saved to MySQL database successfully!", request.getRequestId());
         });
 
         // =========================================================================
@@ -196,7 +245,23 @@ public class MainServerApp {
                 return Response.failure(Command.EDIT_QUESTION, "Database update rejected the change.", request.getRequestId());
             }
 
-            return Response.success(Command.EDIT_QUESTION, wrapperDto, "Question updated in MySQL successfully!", request.getRequestId());
+            // ─────────────────────────────────────────────────────────────────
+            // FIX: Build an actual Question object for the client instead of
+            // echoing back the input wrapperDto. The client casts this payload
+            // to com.hsts.shared.model.Question, so that's what must be sent.
+            // ─────────────────────────────────────────────────────────────────
+            com.hsts.shared.model.Question updatedQ = new com.hsts.shared.model.Question();
+            updatedQ.setQuestionId(questionId);
+            updatedQ.setText(newText);
+            updatedQ.setInstructions(newInstruction);
+            updatedQ.setTopic(wrapperDto.getTopic());
+            // EditQuestionData has no courseId field (course is baked into the
+            // questionId prefix, e.g. "11001" -> course "11"), so derive it here.
+            updatedQ.setCourseId(questionId != null && questionId.length() >= 2 ? questionId.substring(0, 2) : null);
+            updatedQ.setDifficulty(wrapperDto.getDifficulty());
+            updatedQ.setAnswers(wrapperDto.getAnswers());
+
+            return Response.success(Command.EDIT_QUESTION, updatedQ, "Question updated in MySQL successfully!", request.getRequestId());
         });
 
         // =========================================================================
@@ -213,6 +278,9 @@ public class MainServerApp {
                 return Response.failure(Command.DELETE_QUESTION, "Deletion command rejected by backend transaction.", request.getRequestId());
             }
 
+            // Note: DELETE_QUESTION's client handler (QuestionClientController)
+            // does not read the payload at all for this command, so returning
+            // wrapperDto here is safe and does not need to change.
             return Response.success(Command.DELETE_QUESTION, wrapperDto, "Record dropped from database completely.", request.getRequestId());
         });
 
